@@ -25,8 +25,19 @@ type Mastering struct {
 	PhaselimiterPath   string
 	SoundQuality2Cache string
 	Loudness           float64
+	ReferenceMode      string
+	CeilingMode        string
+	Ceiling            float64
+	LimiterOversample  int
+	MasteringEnabled   bool
 	Level              float64
 	BassPreservation   bool
+	MasteringMode      string
+	LowCutFrequency    float64
+	HighCutFrequency   float64
+	OutputFormat       string
+	BitDepth           int
+	SampleRate         int
 	Progression        float64
 	Status             MasteringStatus
 	Message            string
@@ -53,14 +64,23 @@ func (m Mastering) execute(update chan Mastering) {
 		"--input", m.Input,
 		"--output", m.Output,
 		"--ffmpeg", m.Ffmpeg,
-		"--mastering", "true",
-		"--mastering_mode", "mastering5",
+		"--mastering", formatBool(m.MasteringEnabled),
+		"--mastering_mode", m.MasteringMode,
 		"--sound_quality2_cache", m.SoundQuality2Cache,
 		"--mastering_matching_level", formatFloat(m.Level),
 		"--mastering_ms_matching_level", formatFloat(m.Level),
 		"--mastering5_mastering_level", formatFloat(m.Level),
 		"--erb_eval_func_weighting", formatBool(m.BassPreservation),
+		"--reference_mode", m.ReferenceMode,
 		"--reference", formatFloat(m.Loudness),
+		"--ceiling_mode", m.CeilingMode,
+		"--ceiling", formatFloat(m.Ceiling),
+		"--limiter_external_oversample", strconv.Itoa(m.LimiterOversample),
+		"--low_cut_freq", formatFloat(m.LowCutFrequency),
+		"--high_cut_freq", formatFloat(m.HighCutFrequency),
+		"--output_format", m.OutputFormat,
+		"--bit_depth", strconv.Itoa(m.BitDepth),
+		"--sample_rate", strconv.Itoa(m.SampleRate),
 	}
 	cmd := exec.Command(m.PhaselimiterPath, args...)
 	CmdHideWindow(cmd)

@@ -2,9 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/glib"
-	"github.com/gotk3/gotk3/gtk"
 	"log"
 	"net/url"
 	"os"
@@ -13,6 +10,10 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/gotk3/gotk3/gdk"
+	"github.com/gotk3/gotk3/glib"
+	"github.com/gotk3/gotk3/gtk"
 )
 
 const (
@@ -109,6 +110,79 @@ func main() {
 	masteringLevel.SetValue(1)
 	box.Add(masteringLevel)
 
+	referenceModeLabel, err := gtk.LabelNew("Target loudness mode")
+	box.Add(referenceModeLabel)
+	referenceMode, err := gtk.ComboBoxTextNew()
+	referenceMode.AppendText("Loudness")
+	referenceMode.AppendText("YouTube loudness")
+	referenceMode.SetActive(0)
+	box.Add(referenceMode)
+
+	ceilingModeLabel, err := gtk.LabelNew("Ceiling mode")
+	box.Add(ceilingModeLabel)
+	ceilingMode, err := gtk.ComboBoxTextNew()
+	ceilingMode.AppendText("Peak")
+	ceilingMode.AppendText("True peak")
+	ceilingMode.AppendText("True peak (15 kHz lowpass)")
+	ceilingMode.SetActive(1)
+	box.Add(ceilingMode)
+
+	ceilingLabel, err := gtk.LabelNew("Ceiling (dBFS)")
+	box.Add(ceilingLabel)
+	ceiling, err := gtk.SpinButtonNewWithRange(-1, 0, 0.01)
+	ceiling.SetValue(-0.5)
+	box.Add(ceiling)
+
+	oversamplingLabel, err := gtk.LabelNew("Oversampling")
+	box.Add(oversamplingLabel)
+	oversampling, err := gtk.ComboBoxTextNew()
+	oversampling.AppendText("1x (Fast)")
+	oversampling.AppendText("2x (Slow)")
+	oversampling.SetActive(0)
+	box.Add(oversampling)
+
+	automaticMastering, err := gtk.CheckButtonNewWithLabel("Enable automatic mastering")
+	automaticMastering.SetActive(true)
+	box.Add(automaticMastering)
+
+	outputFormatLabel, err := gtk.LabelNew("Output format")
+	box.Add(outputFormatLabel)
+	outputFormat, err := gtk.ComboBoxTextNew()
+	outputFormat.AppendText("WAV (16-bit)")
+	outputFormat.AppendText("WAV (24-bit)")
+	outputFormat.AppendText("WAV (32-bit float)")
+	outputFormat.AppendText("MP3 (320 kbps)")
+	outputFormat.SetActive(2)
+	box.Add(outputFormat)
+
+	sampleRateLabel, err := gtk.LabelNew("Sample rate")
+	box.Add(sampleRateLabel)
+	sampleRate, err := gtk.ComboBoxTextNew()
+	sampleRate.AppendText("44.1 kHz")
+	sampleRate.AppendText("48 kHz")
+	sampleRate.SetActive(0)
+	box.Add(sampleRate)
+
+	lowCutLabel, err := gtk.LabelNew("Low cut frequency (Hz)")
+	box.Add(lowCutLabel)
+	lowCut, err := gtk.SpinButtonNewWithRange(0, 40, 1)
+	lowCut.SetValue(20)
+	box.Add(lowCut)
+
+	highCutLabel, err := gtk.LabelNew("High cut frequency (Hz)")
+	box.Add(highCutLabel)
+	highCut, err := gtk.SpinButtonNewWithRange(18000, 22000, 100)
+	highCut.SetValue(20000)
+	box.Add(highCut)
+
+	algorithmLabel, err := gtk.LabelNew("Mastering algorithm")
+	box.Add(algorithmLabel)
+	algorithm, err := gtk.ComboBoxTextNew()
+	algorithm.AppendText("v1")
+	algorithm.AppendText("v2 (latest)")
+	algorithm.SetActive(1)
+	box.Add(algorithm)
+
 	bassPreservation, err := gtk.CheckButtonNewWithLabel("Preserve bass")
 	box.Add(bassPreservation)
 
@@ -162,14 +236,55 @@ Notes
 				m.Input = r.ReplaceAllString(m.Input, "$1")
 			}
 			outputDir, _ := entry.GetText()
+			outputFormatIndex := outputFormat.GetActive()
+			format := "wav"
+			bitDepth := 32
+			switch outputFormatIndex {
+			case 0:
+				bitDepth = 16
+			case 1:
+				bitDepth = 24
+			case 3:
+				format = "mp3"
+			}
 			m.Output = filepath.Base(m.Input)
 			m.Output = strings.TrimSuffix(m.Output, filepath.Ext(m.Output))
-			m.Output += "_output.wav"
+			m.Output += "_output." + format
 			m.Output = filepath.Join(outputDir, m.Output)
 
 			m.Loudness = loudness.GetValue()
+			if referenceMode.GetActive() == 1 {
+				m.ReferenceMode = "youtube_loudness"
+			} else {
+				m.ReferenceMode = "loudness"
+			}
+			switch ceilingMode.GetActive() {
+			case 0:
+				m.CeilingMode = "peak"
+			case 2:
+				m.CeilingMode = "lowpass_true_peak"
+			default:
+				m.CeilingMode = "true_peak"
+			}
+			m.Ceiling = ceiling.GetValue()
+			m.LimiterOversample = 1 << oversampling.GetActive()
+			m.MasteringEnabled = automaticMastering.GetActive()
 			m.Level = masteringLevel.GetValue()
 			m.BassPreservation = bassPreservation.GetActive()
+			if algorithm.GetActive() == 0 {
+				m.MasteringMode = "classic"
+			} else {
+				m.MasteringMode = "mastering5"
+			}
+			m.LowCutFrequency = lowCut.GetValue()
+			m.HighCutFrequency = highCut.GetValue()
+			m.OutputFormat = format
+			m.BitDepth = bitDepth
+			if sampleRate.GetActive() == 1 {
+				m.SampleRate = 48000
+			} else {
+				m.SampleRate = 44100
+			}
 
 			masteringRunner.Add(m)
 

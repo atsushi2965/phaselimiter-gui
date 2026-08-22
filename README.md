@@ -4,7 +4,9 @@ phaselimiter-gui is a GUI frontend for phaselimiter (a mastering program used in
 
 - The same algorithm with bakuage.com and aimastering.com
 - No internet access (run on local PC)
-- No settings and poor UI (under implementation)
+- Target loudness mode and level, ceiling mode and level, limiter oversampling,
+  automatic mastering, mastering level, bass preservation, low/high cut,
+  mastering algorithm, output format, and sample rate settings
 - No support
 
 ## install
@@ -15,6 +17,10 @@ phaselimiter-gui is a GUI frontend for phaselimiter (a mastering program used in
 2. Download the files attached to [the latest release](https://github.com/ai-mastering/phaselimiter-gui/releases) and extract it
 3. Download [ffmpeg.exe](https://ffmpeg.org/) and put it in the same directory as phaselimiter-gui.exe (or install to some location in $PATH)
 4. Run phaselimiter-gui.exe
+
+To build the Windows version with GitHub Actions, push the changes to GitHub,
+open the Actions tab, select `build-win`, and choose `Run workflow`. Download
+the `build-results` artifact from the completed workflow run.
 
 ### linux/mac
 
@@ -57,7 +63,9 @@ phaselimiter-gui は phaselimiter (bakuage.com / aimastering.com で使われて
 
 - bakuage.com / aimastering.com と同じマスタリングアルゴリズム
 - インターネット不要 (ローカルPCで計算)
-- 設定無し/poor UI (開発中)
+- 目標ラウドネス、マスタリング強度、低域保持、出力形式を設定可能
+- 目標音圧モード、Ceiling、オーバーサンプリング、低域/高域カット、
+	マスタリングアルゴリズム、サンプリングレートも設定可能
 - サポート無し
 
 ## インストール
