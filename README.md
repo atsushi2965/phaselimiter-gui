@@ -7,6 +7,8 @@ phaselimiter-gui is a GUI frontend for phaselimiter (a mastering program used in
 - Target loudness mode and level, ceiling mode and level, limiter oversampling,
   automatic mastering, mastering level, bass preservation, low/high cut,
   mastering algorithm, output format, and sample rate settings
+- Limiter error is displayed after processing when reported by phaselimiter
+- A phaselimiter mastering reference JSON can be specified for custom mastering
 - No support
 
 ## install
@@ -66,6 +68,8 @@ phaselimiter-gui は phaselimiter (bakuage.com / aimastering.com で使われて
 - 目標ラウドネス、マスタリング強度、低域保持、出力形式を設定可能
 - 目標音圧モード、Ceiling、オーバーサンプリング、低域/高域カット、
 	マスタリングアルゴリズム、サンプリングレートも設定可能
+- 処理完了時にphaselimiterが出力するリミッター誤差を表示
+- カスタムマスタリング用のphaselimiterリファレンスJSONを指定可能
 - サポート無し
 
 ## インストール

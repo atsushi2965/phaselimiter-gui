@@ -3,9 +3,12 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 type MasteringStatus string
@@ -18,29 +21,101 @@ const (
 )
 
 type Mastering struct {
-	Id                 int
-	Input              string
-	Output             string
-	Ffmpeg             string
-	PhaselimiterPath   string
-	SoundQuality2Cache string
-	Loudness           float64
-	ReferenceMode      string
-	CeilingMode        string
-	Ceiling            float64
-	LimiterOversample  int
-	MasteringEnabled   bool
-	Level              float64
-	BassPreservation   bool
-	MasteringMode      string
-	LowCutFrequency    float64
-	HighCutFrequency   float64
-	OutputFormat       string
-	BitDepth           int
-	SampleRate         int
-	Progression        float64
-	Status             MasteringStatus
-	Message            string
+	Id                     int
+	Input                  string
+	Output                 string
+	Ffmpeg                 string
+	PhaselimiterPath       string
+	SoundQuality2Cache     string
+	Loudness               float64
+	ReferenceMode          string
+	CeilingMode            string
+	Ceiling                float64
+	LimiterOversample      int
+	MasteringEnabled       bool
+	Level                  float64
+	BassPreservation       bool
+	MasteringMode          string
+	MasteringReferenceFile string
+	ReferenceAudio         string
+	LowCutFrequency        float64
+	HighCutFrequency       float64
+	OutputFormat           string
+	BitDepth               int
+	SampleRate             int
+	LimitingError          float64
+	Progression            float64
+	Status                 MasteringStatus
+	Message                string
+}
+
+func defaultReferenceJSONPath(audioPath, outputDir string) string {
+	base := strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))
+	if outputDir == "" {
+		outputDir = filepath.Dir(audioPath)
+	}
+	return filepath.Join(outputDir, base+"_reference.json")
+}
+
+func detectReferenceAnalyzerPath() string {
+	baseDir := filepath.Join(getExecDir(), "phaselimiter", "bin")
+	candidates := []string{
+		filepath.Join(baseDir, "phase_limiter"),
+		filepath.Join(baseDir, "phase-limiter"),
+		filepath.Join(baseDir, "audio_analyzer"),
+		filepath.Join(baseDir, "analyzer"),
+		filepath.Join(getExecDir(), "phase_limiter"),
+		filepath.Join(getExecDir(), "audio_analyzer"),
+		"phase_limiter",
+		"audio_analyzer",
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func GenerateReferenceJSON(audioPath, analyzerPath, outputPath string) (string, error) {
+	if strings.TrimSpace(audioPath) == "" {
+		return "", fmt.Errorf("audioPath is empty")
+	}
+	if strings.TrimSpace(outputPath) == "" {
+		outputPath = defaultReferenceJSONPath(audioPath, filepath.Dir(audioPath))
+	}
+	if strings.TrimSpace(analyzerPath) == "" {
+		analyzerPath = detectReferenceAnalyzerPath()
+	}
+	if strings.TrimSpace(analyzerPath) == "" {
+		return "", fmt.Errorf("reference analyzer not found")
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command(
+		analyzerPath,
+		"--input", audioPath,
+		"--mode", "default",
+		"--sound_quality2", "true",
+		"--tmp", filepath.Join(os.TempDir(), "phaselimiter-ref"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("reference analyzer failed: %w\noutput: %s", err, string(out))
+	}
+	if len(out) == 0 {
+		return "", fmt.Errorf("reference analyzer returned empty output")
+	}
+
+	if err := os.WriteFile(outputPath, out, 0o644); err != nil {
+		return "", err
+	}
+	return outputPath, nil
 }
 
 type MasteringRunner struct {
@@ -70,6 +145,7 @@ func (m Mastering) execute(update chan Mastering) {
 		"--mastering_matching_level", formatFloat(m.Level),
 		"--mastering_ms_matching_level", formatFloat(m.Level),
 		"--mastering5_mastering_level", formatFloat(m.Level),
+		"--mastering5_mastering_reference_file", m.MasteringReferenceFile,
 		"--erb_eval_func_weighting", formatBool(m.BassPreservation),
 		"--reference_mode", m.ReferenceMode,
 		"--reference", formatFloat(m.Loudness),
@@ -105,15 +181,21 @@ func (m Mastering) execute(update chan Mastering) {
 	}
 
 	scanner := bufio.NewScanner(stdout)
-	r := regexp.MustCompile("progression: ([-+]?[0-9]*\\.?[0-9]+)")
+	progressionPattern := regexp.MustCompile("progression: ([-+]?[0-9]*\\.?[0-9]+)")
+	limitingErrorPattern := regexp.MustCompile("limiting_error:\\s*([-+]?[0-9]*\\.?[0-9]+)")
 	//output := ""
 	for scanner.Scan() {
 		line := scanner.Text()
 		fmt.Println(line)
 		// output += line
-		matches := r.FindStringSubmatch(line)
+		matches := progressionPattern.FindStringSubmatch(line)
 		if len(matches) > 0 {
 			m.Progression, _ = strconv.ParseFloat(matches[1], 64)
+			update <- m
+		}
+		matches = limitingErrorPattern.FindStringSubmatch(line)
+		if len(matches) > 0 {
+			m.LimitingError, _ = strconv.ParseFloat(matches[1], 64)
 			update <- m
 		}
 	}

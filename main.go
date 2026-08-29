@@ -21,6 +21,7 @@ const (
 	COLUMN_INPUT
 	COLUMN_OUTPUT
 	COLUMN_STATUS
+	COLUMN_LIMITING_ERROR
 )
 
 func getExecDir() string {
@@ -49,6 +50,35 @@ func getDefaultOutputDir() string {
 	return home
 }
 
+func resolveReferenceInput(path string, outputDir string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		return path, nil
+	}
+	if isAudioFile(path) {
+		jsonPath := defaultReferenceJSONPath(path, outputDir)
+		generatedPath, err := GenerateReferenceJSON(path, detectReferenceAnalyzerPath(), jsonPath)
+		if err != nil {
+			return "", err
+		}
+		return generatedPath, nil
+	}
+	return "", fmt.Errorf("unsupported reference file type: %s", filepath.Ext(path))
+}
+
+func isAudioFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".wav", ".flac", ".mp3", ".aac", ".m4a", ".ogg", ".opus":
+		return true
+	default:
+		return false
+	}
+}
+
 func createTreeViewColumn(title string, order int) *gtk.TreeViewColumn {
 	renderer, _ := gtk.CellRendererTextNew()
 	tvc, _ := gtk.TreeViewColumnNewWithAttribute(
@@ -63,6 +93,9 @@ func updateListItem(model *gtk.ListStore, iter *gtk.TreeIter, m Mastering) {
 	}
 	model.Set(iter, []int{COLUMN_ID, COLUMN_INPUT, COLUMN_OUTPUT, COLUMN_STATUS},
 		[]interface{}{m.Id, m.Input, m.Output, status})
+	if m.Status == MasteringStatusSucceeded && m.LimitingError > 0 {
+		model.Set(iter, []int{COLUMN_LIMITING_ERROR}, []interface{}{fmt.Sprintf("%.1f dB", m.LimitingError)})
+	}
 }
 
 func main() {
@@ -183,6 +216,33 @@ func main() {
 	algorithm.SetActive(1)
 	box.Add(algorithm)
 
+	referenceLabel, err := gtk.LabelNew("Reference (JSON or audio, optional)")
+	box.Add(referenceLabel)
+	referenceInput, err := gtk.EntryNew()
+	box.Add(referenceInput)
+	referenceInput.DragDestSet(gtk.DEST_DEFAULT_ALL, []gtk.TargetEntry{*targets}, gdk.ACTION_LINK)
+	referenceInput.Connect("drag-data-received", func(_ *gtk.Entry,
+		context *gdk.DragContext,
+		x, y int,
+		data_ptr *gtk.SelectionData,
+		info, time uint) {
+		s := string(data_ptr.GetData())
+		lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+		for _, line := range lines {
+			fileUrl, _ := url.Parse(line)
+			if line == "" || fileUrl == nil {
+				continue
+			}
+			filePath := fileUrl.Path
+			if runtime.GOOS == "windows" {
+				r := regexp.MustCompile("^/([a-zA-Z]:/)")
+				filePath = r.ReplaceAllString(filePath, "$1")
+			}
+			referenceInput.SetText(filePath)
+			return
+		}
+	})
+
 	bassPreservation, err := gtk.CheckButtonNewWithLabel("Preserve bass")
 	box.Add(bassPreservation)
 
@@ -198,12 +258,13 @@ Notes
 	box.Add(notes)
 
 	ls, err := gtk.ListStoreNew(glib.TYPE_INT, glib.TYPE_STRING,
-		glib.TYPE_STRING, glib.TYPE_STRING)
+		glib.TYPE_STRING, glib.TYPE_STRING, glib.TYPE_STRING)
 
 	tv, err := gtk.TreeViewNewWithModel(ls)
 	tv.AppendColumn(createTreeViewColumn("input file", COLUMN_INPUT))
 	tv.AppendColumn(createTreeViewColumn("output file", COLUMN_OUTPUT))
 	tv.AppendColumn(createTreeViewColumn("status", COLUMN_STATUS))
+	tv.AppendColumn(createTreeViewColumn("limiter error", COLUMN_LIMITING_ERROR))
 	box.Add(tv)
 
 	var destInData = func(lbi *gtk.Window,
@@ -275,6 +336,20 @@ Notes
 				m.MasteringMode = "classic"
 			} else {
 				m.MasteringMode = "mastering5"
+			}
+			referencePath, _ := referenceInput.GetText()
+			if strings.TrimSpace(referencePath) != "" {
+				resolvedReference, err := resolveReferenceInput(referencePath, outputDir)
+				if err != nil {
+					m.Status = MasteringStatusFailed
+					m.Message = "failed to prepare reference JSON: " + err.Error()
+					masteringRunner.Add(m)
+					iter := ls.Insert(0)
+					updateListItem(ls, iter, m)
+					continue
+				}
+				m.MasteringReferenceFile = resolvedReference
+				referenceInput.SetText(resolvedReference)
 			}
 			m.LowCutFrequency = lowCut.GetValue()
 			m.HighCutFrequency = highCut.GetValue()
