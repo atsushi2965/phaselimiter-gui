@@ -100,7 +100,12 @@ func createTreeViewColumn(title string, order int) *gtk.TreeViewColumn {
 
 func updateListItem(model *gtk.ListStore, iter *gtk.TreeIter, m Mastering) {
 	status := string(m.Status)
-	if m.Status == MasteringStatusProcessing {
+	if m.Status == MasteringStatusReference {
+		status = m.Message
+		if status == "" {
+			status = "generating reference JSON"
+		}
+	} else if m.Status == MasteringStatusProcessing {
 		status = strconv.FormatFloat(m.Progression*100, 'f', 0, 64) + "%"
 	}
 	model.Set(iter, []int{COLUMN_ID, COLUMN_INPUT, COLUMN_OUTPUT, COLUMN_STATUS},

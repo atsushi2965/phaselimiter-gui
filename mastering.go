@@ -13,6 +13,7 @@ type MasteringStatus string
 
 const (
 	MasteringStatusWaiting    = MasteringStatus("waiting")
+	MasteringStatusReference  = MasteringStatus("reference")
 	MasteringStatusProcessing = MasteringStatus("processing")
 	MasteringStatusFailed     = MasteringStatus("failed")
 	MasteringStatusSucceeded  = MasteringStatus("succeeded")
@@ -65,7 +66,11 @@ func (m Mastering) execute(update chan Mastering) {
 		return "false"
 	}
 
-	m.Status = MasteringStatusProcessing
+	if strings.TrimSpace(m.ReferenceInput) != "" {
+		m.Status = MasteringStatusReference
+	} else {
+		m.Status = MasteringStatusProcessing
+	}
 	update <- m
 	if strings.TrimSpace(m.ReferenceInput) != "" {
 		resolvedReference, err := resolveReferenceInput(
@@ -74,6 +79,10 @@ func (m Mastering) execute(update chan Mastering) {
 			m.ReferenceAnalyzerPath,
 			m.Ffmpeg,
 			m.SoundQuality2Cache,
+			func(progress string) {
+				m.Message = progress
+				update <- m
+			},
 		)
 		if err != nil {
 			m.Status = MasteringStatusFailed
@@ -83,6 +92,8 @@ func (m Mastering) execute(update chan Mastering) {
 		}
 		m.MasteringReferenceFile = resolvedReference
 	}
+	m.Status = MasteringStatusProcessing
+	update <- m
 
 	args := []string{
 		"--input", m.Input,

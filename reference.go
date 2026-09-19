@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,7 +10,7 @@ import (
 	"strings"
 )
 
-func resolveReferenceInput(path string, outputDir string, analyzerPath string, ffmpegPath string, soundQuality2Cache string) (string, error) {
+func resolveReferenceInput(path string, outputDir string, analyzerPath string, ffmpegPath string, soundQuality2Cache string, progress func(string)) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", nil
@@ -21,7 +23,7 @@ func resolveReferenceInput(path string, outputDir string, analyzerPath string, f
 	if _, err := os.Stat(jsonPath); err == nil {
 		return jsonPath, nil
 	}
-	generatedPath, err := GenerateReferenceJSON(path, analyzerPath, ffmpegPath, soundQuality2Cache, jsonPath)
+	generatedPath, err := GenerateReferenceJSON(path, analyzerPath, ffmpegPath, soundQuality2Cache, jsonPath, progress)
 	if err != nil {
 		return "", err
 	}
@@ -36,7 +38,7 @@ func defaultReferenceJSONPath(audioPath, outputDir string) string {
 	return filepath.Join(outputDir, base+".json")
 }
 
-func GenerateReferenceJSON(audioPath, analyzerPath, ffmpegPath, soundQuality2Cache, outputPath string) (string, error) {
+func GenerateReferenceJSON(audioPath, analyzerPath, ffmpegPath, soundQuality2Cache, outputPath string, progress func(string)) (string, error) {
 	if strings.TrimSpace(audioPath) == "" {
 		return "", fmt.Errorf("audioPath is empty")
 	}
@@ -59,15 +61,66 @@ func GenerateReferenceJSON(audioPath, analyzerPath, ffmpegPath, soundQuality2Cac
 		"--sound_quality2_cache", soundQuality2Cache,
 		"--tmp", filepath.Join(os.TempDir(), "phaselimiter-ref"),
 	)
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("reference analyzer failed: %w\noutput: %s", err, string(output))
+		return "", err
 	}
-	if len(output) == 0 {
-		return "", fmt.Errorf("reference analyzer returned empty output")
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("reference analyzer failed to start: %w", err)
+	}
+	var stderrOutput bytes.Buffer
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		startedTasks := 0
+		finishedTasks := 0
+		scanner := bufio.NewScanner(stderr)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			stderrOutput.WriteString(line)
+			stderrOutput.WriteByte('\n')
+			if progress == nil {
+				continue
+			}
+			if strings.HasPrefix(line, "Task start ") {
+				startedTasks++
+				continue
+			}
+			if strings.HasPrefix(line, "Task finish ") {
+				finishedTasks++
+				if startedTasks > 0 {
+					progress(fmt.Sprintf("reference analysis: %d%%", finishedTasks*100/startedTasks))
+				}
+			}
+		}
+	}()
+	var output bytes.Buffer
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		output.WriteString(line)
+		output.WriteByte('\n')
+	}
+	readErr := scanner.Err()
+	waitErr := cmd.Wait()
+	<-stderrDone
+	if readErr != nil {
+		return "", fmt.Errorf("read reference analyzer output: %w", readErr)
+	}
+	if waitErr != nil {
+		return "", fmt.Errorf("reference analyzer failed: %w\nerror output: %s", waitErr, stderrOutput.String())
+	}
+	if output.Len() == 0 {
+		return "", fmt.Errorf("reference analyzer returned empty output: %s", stderrOutput.String())
 	}
 
-	if err := os.WriteFile(outputPath, output, 0o644); err != nil {
+	if err := os.WriteFile(outputPath, output.Bytes(), 0o644); err != nil {
 		return "", err
 	}
 	return outputPath, nil
