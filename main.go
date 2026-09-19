@@ -239,7 +239,7 @@ func main() {
 	referenceButton, err := gtk.ButtonNewWithLabel("Browse...")
 	referenceBox.Add(referenceButton)
 	referenceButton.Connect("clicked", func() {
-		dialog, err := gtk.FileChooserDialogNew(
+		dialog, err := gtk.FileChooserDialogNewWith2Buttons(
 			"Select reference file",
 			win,
 			gtk.FILE_CHOOSER_ACTION_OPEN,
@@ -266,7 +266,7 @@ func main() {
 		}
 
 		if dialog.Run() == gtk.RESPONSE_ACCEPT {
-			if path, err := dialog.GetFilename(); err == nil {
+			if path := dialog.GetFilename(); path != "" {
 				referenceInput.SetText(path)
 			}
 		}

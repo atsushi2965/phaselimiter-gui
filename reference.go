@@ -17,11 +17,10 @@ func resolveReferenceInput(path string, outputDir string, analyzerPath string, f
 		return path, nil
 	}
 
-	siblingJSONPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".json"
-	if _, err := os.Stat(siblingJSONPath); err == nil {
-		return siblingJSONPath, nil
-	}
 	jsonPath := defaultReferenceJSONPath(path, outputDir)
+	if _, err := os.Stat(jsonPath); err == nil {
+		return jsonPath, nil
+	}
 	generatedPath, err := GenerateReferenceJSON(path, analyzerPath, ffmpegPath, soundQuality2Cache, jsonPath)
 	if err != nil {
 		return "", err
