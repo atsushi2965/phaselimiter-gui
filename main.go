@@ -24,6 +24,47 @@ const (
 	COLUMN_LIMITING_ERROR
 )
 
+type AppPaths struct {
+	PhaseLimiter      string
+	AudioAnalyzer     string
+	SoundQualityCache string
+	DefaultReference  string
+}
+
+var windowsFilePathPattern = regexp.MustCompile("^/([a-zA-Z]:/)")
+
+func newAppPaths(execDir string) AppPaths {
+	phaseLimiter := filepath.Join(execDir, "phaselimiter/bin/phase_limiter")
+	return AppPaths{
+		PhaseLimiter:      phaseLimiter,
+		AudioAnalyzer:     filepath.Join(filepath.Dir(phaseLimiter), "audio_analyzer"),
+		SoundQualityCache: filepath.Join(execDir, "phaselimiter/resource/sound_quality2_cache"),
+		DefaultReference:  filepath.Join(execDir, "phaselimiter/resource/mastering_reference.json"),
+	}
+}
+
+func fileURIToPath(line string) (string, error) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", fmt.Errorf("empty file URI")
+	}
+	fileURL, err := url.Parse(line)
+	if err != nil {
+		return "", err
+	}
+	filePath, err := url.PathUnescape(fileURL.Path)
+	if err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		filePath = windowsFilePathPattern.ReplaceAllString(filePath, "$1")
+	}
+	if filePath == "" {
+		return "", fmt.Errorf("file URI has no path: %s", line)
+	}
+	return filePath, nil
+}
+
 func getExecDir() string {
 	ex, err := os.Executable()
 	if err != nil {
@@ -50,35 +91,6 @@ func getDefaultOutputDir() string {
 	return home
 }
 
-func resolveReferenceInput(path string, outputDir string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", nil
-	}
-	if strings.EqualFold(filepath.Ext(path), ".json") {
-		return path, nil
-	}
-	if isAudioFile(path) {
-		jsonPath := defaultReferenceJSONPath(path, outputDir)
-		generatedPath, err := GenerateReferenceJSON(path, detectReferenceAnalyzerPath(), jsonPath)
-		if err != nil {
-			return "", err
-		}
-		return generatedPath, nil
-	}
-	return "", fmt.Errorf("unsupported reference file type: %s", filepath.Ext(path))
-}
-
-func isAudioFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".wav", ".flac", ".mp3", ".aac", ".m4a", ".ogg", ".opus":
-		return true
-	default:
-		return false
-	}
-}
-
 func createTreeViewColumn(title string, order int) *gtk.TreeViewColumn {
 	renderer, _ := gtk.CellRendererTextNew()
 	tvc, _ := gtk.TreeViewColumnNewWithAttribute(
@@ -102,6 +114,8 @@ func main() {
 	masteringRunner := CreateMasteringRunner()
 	go masteringRunner.Run()
 	masteringId := 0
+	execDir := getExecDir()
+	paths := newAppPaths(execDir)
 
 	gtk.Init(nil)
 
@@ -218,8 +232,45 @@ func main() {
 
 	referenceLabel, err := gtk.LabelNew("Reference (JSON or audio, optional)")
 	box.Add(referenceLabel)
+	referenceBox, err := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 4)
+	box.Add(referenceBox)
 	referenceInput, err := gtk.EntryNew()
-	box.Add(referenceInput)
+	referenceBox.Add(referenceInput)
+	referenceButton, err := gtk.ButtonNewWithLabel("Browse...")
+	referenceBox.Add(referenceButton)
+	referenceButton.Connect("clicked", func() {
+		dialog, err := gtk.FileChooserDialogNew(
+			"Select reference file",
+			win,
+			gtk.FILE_CHOOSER_ACTION_OPEN,
+			"Cancel", gtk.RESPONSE_CANCEL,
+			"Open", gtk.RESPONSE_ACCEPT,
+		)
+		if err != nil {
+			return
+		}
+		defer dialog.Destroy()
+
+		jsonFilter, err := gtk.FileFilterNew()
+		if err == nil {
+			jsonFilter.SetName("Reference JSON (*.json)")
+			jsonFilter.AddPattern("*.json")
+			dialog.AddFilter(jsonFilter)
+		}
+
+		audioFilter, err := gtk.FileFilterNew()
+		if err == nil {
+			audioFilter.SetName("Audio files (FFmpeg)")
+			audioFilter.AddPattern("*")
+			dialog.AddFilter(audioFilter)
+		}
+
+		if dialog.Run() == gtk.RESPONSE_ACCEPT {
+			if path, err := dialog.GetFilename(); err == nil {
+				referenceInput.SetText(path)
+			}
+		}
+	})
 	referenceInput.DragDestSet(gtk.DEST_DEFAULT_ALL, []gtk.TargetEntry{*targets}, gdk.ACTION_LINK)
 	referenceInput.Connect("drag-data-received", func(_ *gtk.Entry,
 		context *gdk.DragContext,
@@ -229,14 +280,9 @@ func main() {
 		s := string(data_ptr.GetData())
 		lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
 		for _, line := range lines {
-			fileUrl, _ := url.Parse(line)
-			if line == "" || fileUrl == nil {
+			filePath, err := fileURIToPath(line)
+			if err != nil {
 				continue
-			}
-			filePath := fileUrl.Path
-			if runtime.GOOS == "windows" {
-				r := regexp.MustCompile("^/([a-zA-Z]:/)")
-				filePath = r.ReplaceAllString(filePath, "$1")
 			}
 			referenceInput.SetText(filePath)
 			return
@@ -278,8 +324,8 @@ Notes
 		lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
 
 		for _, line := range lines {
-			fileUrl, _ := url.Parse(line)
-			if line == "" || fileUrl == nil {
+			filePath, err := fileURIToPath(line)
+			if err != nil {
 				continue
 			}
 
@@ -288,14 +334,10 @@ Notes
 			m.Id = masteringId
 			masteringId += 1
 			m.Ffmpeg = "ffmpeg"
-			m.PhaselimiterPath = filepath.Join(getExecDir(), "phaselimiter/bin/phase_limiter")
-			m.SoundQuality2Cache = filepath.Join(getExecDir(), "phaselimiter/resource/sound_quality2_cache")
+			m.PhaselimiterPath = paths.PhaseLimiter
+			m.SoundQuality2Cache = paths.SoundQualityCache
 
-			m.Input = fileUrl.Path
-			if runtime.GOOS == "windows" {
-				r := regexp.MustCompile("^/([a-zA-Z]:/)")
-				m.Input = r.ReplaceAllString(m.Input, "$1")
-			}
+			m.Input = filePath
 			outputDir, _ := entry.GetText()
 			outputFormatIndex := outputFormat.GetActive()
 			format := "wav"
@@ -338,19 +380,13 @@ Notes
 				m.MasteringMode = "mastering5"
 			}
 			referencePath, _ := referenceInput.GetText()
-			if strings.TrimSpace(referencePath) != "" {
-				resolvedReference, err := resolveReferenceInput(referencePath, outputDir)
-				if err != nil {
-					m.Status = MasteringStatusFailed
-					m.Message = "failed to prepare reference JSON: " + err.Error()
-					masteringRunner.Add(m)
-					iter := ls.Insert(0)
-					updateListItem(ls, iter, m)
-					continue
-				}
-				m.MasteringReferenceFile = resolvedReference
-				referenceInput.SetText(resolvedReference)
+			if strings.TrimSpace(referencePath) == "" {
+				referencePath = paths.DefaultReference
+				referenceInput.SetText(referencePath)
 			}
+			m.ReferenceInput = referencePath
+			m.ReferenceAnalyzerPath = paths.AudioAnalyzer
+			m.ReferenceOutputDir = outputDir
 			m.LowCutFrequency = lowCut.GetValue()
 			m.HighCutFrequency = highCut.GetValue()
 			m.OutputFormat = format

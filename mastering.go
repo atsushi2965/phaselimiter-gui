@@ -3,9 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,6 +24,9 @@ type Mastering struct {
 	Output                 string
 	Ffmpeg                 string
 	PhaselimiterPath       string
+	ReferenceInput         string
+	ReferenceAnalyzerPath  string
+	ReferenceOutputDir     string
 	SoundQuality2Cache     string
 	Loudness               float64
 	ReferenceMode          string
@@ -37,7 +38,6 @@ type Mastering struct {
 	BassPreservation       bool
 	MasteringMode          string
 	MasteringReferenceFile string
-	ReferenceAudio         string
 	LowCutFrequency        float64
 	HighCutFrequency       float64
 	OutputFormat           string
@@ -48,76 +48,6 @@ type Mastering struct {
 	Status                 MasteringStatus
 	Message                string
 }
-
-func defaultReferenceJSONPath(audioPath, outputDir string) string {
-	base := strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))
-	if outputDir == "" {
-		outputDir = filepath.Dir(audioPath)
-	}
-	return filepath.Join(outputDir, base+"_reference.json")
-}
-
-func detectReferenceAnalyzerPath() string {
-	baseDir := filepath.Join(getExecDir(), "phaselimiter", "bin")
-	candidates := []string{
-		filepath.Join(baseDir, "phase_limiter"),
-		filepath.Join(baseDir, "phase-limiter"),
-		filepath.Join(baseDir, "audio_analyzer"),
-		filepath.Join(baseDir, "analyzer"),
-		filepath.Join(getExecDir(), "phase_limiter"),
-		filepath.Join(getExecDir(), "audio_analyzer"),
-		"phase_limiter",
-		"audio_analyzer",
-	}
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func GenerateReferenceJSON(audioPath, analyzerPath, outputPath string) (string, error) {
-	if strings.TrimSpace(audioPath) == "" {
-		return "", fmt.Errorf("audioPath is empty")
-	}
-	if strings.TrimSpace(outputPath) == "" {
-		outputPath = defaultReferenceJSONPath(audioPath, filepath.Dir(audioPath))
-	}
-	if strings.TrimSpace(analyzerPath) == "" {
-		analyzerPath = detectReferenceAnalyzerPath()
-	}
-	if strings.TrimSpace(analyzerPath) == "" {
-		return "", fmt.Errorf("reference analyzer not found")
-	}
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		return "", err
-	}
-
-	cmd := exec.Command(
-		analyzerPath,
-		"--input", audioPath,
-		"--mode", "default",
-		"--sound_quality2", "true",
-		"--tmp", filepath.Join(os.TempDir(), "phaselimiter-ref"),
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("reference analyzer failed: %w\noutput: %s", err, string(out))
-	}
-	if len(out) == 0 {
-		return "", fmt.Errorf("reference analyzer returned empty output")
-	}
-
-	if err := os.WriteFile(outputPath, out, 0o644); err != nil {
-		return "", err
-	}
-	return outputPath, nil
-}
-
 type MasteringRunner struct {
 	MasteringUpdate chan Mastering
 	mastering       chan Mastering
@@ -135,6 +65,25 @@ func (m Mastering) execute(update chan Mastering) {
 		return "false"
 	}
 
+	m.Status = MasteringStatusProcessing
+	update <- m
+	if strings.TrimSpace(m.ReferenceInput) != "" {
+		resolvedReference, err := resolveReferenceInput(
+			m.ReferenceInput,
+			m.ReferenceOutputDir,
+			m.ReferenceAnalyzerPath,
+			m.Ffmpeg,
+			m.SoundQuality2Cache,
+		)
+		if err != nil {
+			m.Status = MasteringStatusFailed
+			m.Message = "failed to prepare reference JSON: " + err.Error()
+			update <- m
+			return
+		}
+		m.MasteringReferenceFile = resolvedReference
+	}
+
 	args := []string{
 		"--input", m.Input,
 		"--output", m.Output,
@@ -145,7 +94,6 @@ func (m Mastering) execute(update chan Mastering) {
 		"--mastering_matching_level", formatFloat(m.Level),
 		"--mastering_ms_matching_level", formatFloat(m.Level),
 		"--mastering5_mastering_level", formatFloat(m.Level),
-		"--mastering5_mastering_reference_file", m.MasteringReferenceFile,
 		"--erb_eval_func_weighting", formatBool(m.BassPreservation),
 		"--reference_mode", m.ReferenceMode,
 		"--reference", formatFloat(m.Loudness),
@@ -158,6 +106,13 @@ func (m Mastering) execute(update chan Mastering) {
 		"--bit_depth", strconv.Itoa(m.BitDepth),
 		"--sample_rate", strconv.Itoa(m.SampleRate),
 	}
+	if strings.TrimSpace(m.MasteringReferenceFile) != "" {
+		referenceFlag := "--mastering_reference_file"
+		if m.MasteringMode == "mastering5" {
+			referenceFlag = "--mastering5_mastering_reference_file"
+		}
+		args = append(args, referenceFlag, m.MasteringReferenceFile)
+	}
 	cmd := exec.Command(m.PhaselimiterPath, args...)
 	CmdHideWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
@@ -168,9 +123,6 @@ func (m Mastering) execute(update chan Mastering) {
 		return
 	}
 	cmd.Stderr = cmd.Stdout
-
-	m.Status = MasteringStatusProcessing
-	update <- m
 
 	err = cmd.Start()
 	if err != nil {
