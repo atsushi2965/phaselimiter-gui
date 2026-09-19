@@ -232,45 +232,8 @@ func main() {
 
 	referenceLabel, err := gtk.LabelNew("Reference (JSON or audio, optional)")
 	box.Add(referenceLabel)
-	referenceBox, err := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 4)
-	box.Add(referenceBox)
 	referenceInput, err := gtk.EntryNew()
-	referenceBox.Add(referenceInput)
-	referenceButton, err := gtk.ButtonNewWithLabel("Browse...")
-	referenceBox.Add(referenceButton)
-	referenceButton.Connect("clicked", func() {
-		dialog, err := gtk.FileChooserDialogNewWith2Buttons(
-			"Select reference file",
-			win,
-			gtk.FILE_CHOOSER_ACTION_OPEN,
-			"Cancel", gtk.RESPONSE_CANCEL,
-			"Open", gtk.RESPONSE_ACCEPT,
-		)
-		if err != nil {
-			return
-		}
-		defer dialog.Destroy()
-
-		jsonFilter, err := gtk.FileFilterNew()
-		if err == nil {
-			jsonFilter.SetName("Reference JSON (*.json)")
-			jsonFilter.AddPattern("*.json")
-			dialog.AddFilter(jsonFilter)
-		}
-
-		audioFilter, err := gtk.FileFilterNew()
-		if err == nil {
-			audioFilter.SetName("Audio files (FFmpeg)")
-			audioFilter.AddPattern("*")
-			dialog.AddFilter(audioFilter)
-		}
-
-		if dialog.Run() == gtk.RESPONSE_ACCEPT {
-			if path := dialog.GetFilename(); path != "" {
-				referenceInput.SetText(path)
-			}
-		}
-	})
+	box.Add(referenceInput)
 	referenceInput.DragDestSet(gtk.DEST_DEFAULT_ALL, []gtk.TargetEntry{*targets}, gdk.ACTION_LINK)
 	referenceInput.Connect("drag-data-received", func(_ *gtk.Entry,
 		context *gdk.DragContext,
